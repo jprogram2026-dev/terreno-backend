@@ -46,19 +46,46 @@ _bq_client: Optional["bigquery.Client"] = None
 
 
 def _get_client() -> Optional["bigquery.Client"]:
-    """Cria cliente BigQuery sob demanda. Retorna None se não configurado."""
+    """
+    Cria cliente BigQuery sob demanda. Retorna None se não configurado.
+
+    Suporta 3 formas de autenticação, em ordem de prioridade:
+      1) GOOGLE_APPLICATION_CREDENTIALS_JSON — conteúdo do JSON direto na env var.
+         Recomendado para deploy em PaaS (Render, Fly.io, Railway) onde não há
+         filesystem persistente para armazenar o arquivo.
+      2) GOOGLE_APPLICATION_CREDENTIALS — caminho para arquivo JSON.
+         Usado em servidores tradicionais.
+      3) Application Default Credentials — quando o ambiente já tem auth do gcloud
+         (uso local: `gcloud auth application-default login`).
+    """
     global _bq_client
     if not BQ_AVAILABLE:
         return None
     if _bq_client is not None:
         return _bq_client
+
+    creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     project = os.getenv("GCP_PROJECT_ID")
-    if not (creds_path or project):
-        log.info("RAIS: GOOGLE_APPLICATION_CREDENTIALS ou GCP_PROJECT_ID não setados")
+
+    if not (creds_json or creds_path or project):
+        log.info("RAIS: credenciais BigQuery não configuradas")
         return None
+
     try:
-        _bq_client = bigquery.Client(project=project) if project else bigquery.Client()
+        if creds_json:
+            # Conteúdo JSON direto na env var (modo PaaS)
+            import json
+            from google.oauth2 import service_account
+            creds_dict = json.loads(creds_json)
+            credentials = service_account.Credentials.from_service_account_info(creds_dict)
+            _bq_client = bigquery.Client(
+                project=project or creds_dict.get("project_id"),
+                credentials=credentials,
+            )
+        else:
+            # Application Default Credentials (gcloud login) ou caminho de arquivo
+            _bq_client = bigquery.Client(project=project) if project else bigquery.Client()
         log.info("BigQuery cliente inicializado (projeto: %s)", _bq_client.project)
         return _bq_client
     except Exception as e:
