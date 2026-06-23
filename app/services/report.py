@@ -20,17 +20,59 @@ from app.services import bcb, ibge, rais, trends
 
 log = logging.getLogger(__name__)
 
-# Mapeamento de categorias de negócio → CNAE classe e termo de busca.
+# Mapeamento de categorias de negócio → CNAE classe (4 dígitos da CNAE 2.0)
+# e termo de busca pro Google Trends. cliente_alvo é a proporção da população
+# que consome esse tipo de negócio com frequência relevante (estimativa).
 # Em produção, isso viraria uma tabela no banco. Para acadêmico, dict basta.
 CNAE_CATALOG: dict[str, dict] = {
-    "cafeteria":   {"nome": "Cafeteria",           "cnae_classe": "5611", "termo": "cafeteria",   "cliente_alvo": 0.22},
-    "padaria":     {"nome": "Padaria/Confeitaria", "cnae_classe": "4721", "termo": "padaria",     "cliente_alvo": 0.75},
-    "academia":    {"nome": "Academia/Fitness",    "cnae_classe": "9313", "termo": "academia",    "cliente_alvo": 0.18},
-    "petshop":     {"nome": "Petshop",             "cnae_classe": "4789", "termo": "petshop",     "cliente_alvo": 0.46},
-    "restaurante": {"nome": "Restaurante",         "cnae_classe": "5611", "termo": "restaurante", "cliente_alvo": 0.55},
-    "moda":        {"nome": "Loja de roupas",      "cnae_classe": "4781", "termo": "loja roupas", "cliente_alvo": 0.85},
-    "salao":       {"nome": "Salão/Barbearia",     "cnae_classe": "9602", "termo": "salão beleza","cliente_alvo": 0.90},
-    "mercado":     {"nome": "Mini-mercado",        "cnae_classe": "4712", "termo": "mercado",     "cliente_alvo": 0.95},
+    # --- ALIMENTAÇÃO ---
+    "cafeteria":       {"nome": "Cafeteria",                "cnae_classe": "5611", "termo": "cafeteria",         "cliente_alvo": 0.22},
+    "restaurante":     {"nome": "Restaurante",              "cnae_classe": "5611", "termo": "restaurante",       "cliente_alvo": 0.55},
+    "lanchonete":      {"nome": "Lanchonete/Hamburgueria",  "cnae_classe": "5611", "termo": "lanchonete",        "cliente_alvo": 0.70},
+    "pizzaria":        {"nome": "Pizzaria",                 "cnae_classe": "5611", "termo": "pizzaria",          "cliente_alvo": 0.50},
+    "padaria":         {"nome": "Padaria/Confeitaria",      "cnae_classe": "4721", "termo": "padaria",           "cliente_alvo": 0.75},
+    "sorveteria":      {"nome": "Sorveteria/Açaiteria",     "cnae_classe": "5611", "termo": "sorveteria",        "cliente_alvo": 0.35},
+    "buffet":          {"nome": "Buffet/Eventos",           "cnae_classe": "5620", "termo": "buffet",            "cliente_alvo": 0.05},
+    "mercado":         {"nome": "Mini-mercado",             "cnae_classe": "4712", "termo": "mercado",           "cliente_alvo": 0.95},
+
+    # --- BELEZA E ESTÉTICA ---
+    "salao":           {"nome": "Salão/Barbearia",          "cnae_classe": "9602", "termo": "salão beleza",      "cliente_alvo": 0.90},
+    "estetica":        {"nome": "Estética/Depilação",       "cnae_classe": "9602", "termo": "estética",          "cliente_alvo": 0.40},
+    "massoterapia":    {"nome": "Massoterapia/Spa",         "cnae_classe": "9609", "termo": "massagem",          "cliente_alvo": 0.10},
+    "cosmeticos":      {"nome": "Cosméticos/Perfumaria",    "cnae_classe": "4772", "termo": "cosméticos",        "cliente_alvo": 0.65},
+
+    # --- SAÚDE ---
+    "odontologia":     {"nome": "Clínica Odontológica",     "cnae_classe": "8630", "termo": "dentista",          "cliente_alvo": 0.55},
+    "farmacia":        {"nome": "Farmácia/Drogaria",        "cnae_classe": "4771", "termo": "farmácia",          "cliente_alvo": 0.85},
+    "otica":           {"nome": "Ótica",                    "cnae_classe": "4774", "termo": "ótica",             "cliente_alvo": 0.30},
+
+    # --- EDUCAÇÃO ---
+    "idiomas":         {"nome": "Escola de Idiomas",        "cnae_classe": "8593", "termo": "escola de inglês",  "cliente_alvo": 0.06},
+    "cursos":          {"nome": "Cursos Profissionalizantes","cnae_classe": "8599", "termo": "curso técnico",     "cliente_alvo": 0.05},
+    "escolinha":       {"nome": "Escolinha Esportiva",      "cnae_classe": "8591", "termo": "escolinha de futebol","cliente_alvo": 0.08},
+
+    # --- FITNESS E BEM-ESTAR ---
+    "academia":        {"nome": "Academia/Fitness",         "cnae_classe": "9313", "termo": "academia",          "cliente_alvo": 0.18},
+    "pilates":         {"nome": "Pilates/Yoga",             "cnae_classe": "9313", "termo": "pilates",           "cliente_alvo": 0.10},
+
+    # --- PETS ---
+    "petshop":         {"nome": "Petshop",                  "cnae_classe": "4789", "termo": "petshop",           "cliente_alvo": 0.46},
+    "veterinaria":     {"nome": "Clínica Veterinária",      "cnae_classe": "7500", "termo": "veterinário",       "cliente_alvo": 0.40},
+
+    # --- VAREJO ---
+    "moda":            {"nome": "Loja de Roupas",           "cnae_classe": "4781", "termo": "loja roupas",       "cliente_alvo": 0.85},
+    "calcados":        {"nome": "Loja de Calçados",         "cnae_classe": "4782", "termo": "loja de calçados",  "cliente_alvo": 0.50},
+    "floricultura":    {"nome": "Floricultura",             "cnae_classe": "4789", "termo": "floricultura",      "cliente_alvo": 0.15},
+    "papelaria":       {"nome": "Papelaria/Livraria",       "cnae_classe": "4761", "termo": "papelaria",         "cliente_alvo": 0.40},
+
+    # --- SERVIÇOS ---
+    "lavanderia":      {"nome": "Lavanderia",               "cnae_classe": "9601", "termo": "lavanderia",        "cliente_alvo": 0.20},
+    "oficina":         {"nome": "Oficina Mecânica",         "cnae_classe": "4520", "termo": "oficina mecânica",  "cliente_alvo": 0.40},
+    "contabilidade":   {"nome": "Escritório de Contabilidade","cnae_classe": "6920", "termo": "contador",          "cliente_alvo": 0.05},
+    "celular":         {"nome": "Assistência Técnica Celular","cnae_classe": "9521", "termo": "assistência celular","cliente_alvo": 0.35},
+
+    # --- HOSPEDAGEM ---
+    "pousada":         {"nome": "Pousada/Hotel Pequeno",    "cnae_classe": "5510", "termo": "pousada",           "cliente_alvo": 0.20},
 }
 
 # População estimada do Brasil para cálculo de ratio nacional
