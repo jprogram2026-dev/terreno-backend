@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings, setup_logging
 from app.core.http import close_client
-from app.routers import localidades, relatorio, sistema
+from app.routers import localidades, mapa, relatorio, sistema
 from app.services import rais, trends
 from app.services.ibge import discover_sidra_metadata
 
@@ -69,6 +69,7 @@ app.add_middleware(
 app.include_router(sistema.router)
 app.include_router(localidades.router)
 app.include_router(relatorio.router)
+app.include_router(mapa.router)
 
 
 @app.get("/", include_in_schema=False)

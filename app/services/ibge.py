@@ -52,6 +52,29 @@ async def list_municipalities(uf_id: int) -> list[dict]:
     ]
 
 
+@cached("ibge:muni")
+async def get_municipio(muni_id: int) -> dict:
+    """
+    Detalhes de um município específico por ID — usado pra resolver nome e UF
+    quando temos só o código (ex: 5103403 → Cuiabá, MT). Cacheado porque dado
+    estático que não muda.
+    """
+    data = await fetch_json(
+        f"{_settings.IBGE_LOCALIDADES}/municipios/{muni_id}"
+    )
+    if not data:
+        return {}
+    uf_obj = (data.get("microrregiao", {})
+                  .get("mesorregiao", {})
+                  .get("UF", {}))
+    return {
+        "id": data.get("id"),
+        "nome": data.get("nome"),
+        "uf_sigla": uf_obj.get("sigla"),
+        "uf_nome": uf_obj.get("nome"),
+    }
+
+
 # ============================================================================
 # População (SIDRA 6579)
 # ============================================================================

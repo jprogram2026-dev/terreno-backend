@@ -39,14 +39,27 @@ async def close_client() -> None:
         await _client.aclose()
 
 
-async def fetch_json(url: str, params: dict | None = None, timeout: float | None = None) -> Any:
+async def fetch_json(
+    url: str,
+    params: dict | None = None,
+    timeout: float | None = None,
+    method: str = "GET",
+    data: dict | None = None,
+    headers: dict | None = None,
+) -> Any:
     """
-    GET → JSON com tratamento de erro consistente.
+    Requisição HTTP → JSON com tratamento de erro consistente.
+    Por padrão faz GET; aceita POST quando method='POST' (usado por APIs como
+    Overpass que recebem queries no body).
+
     Levanta httpx.HTTPStatusError em códigos 4xx/5xx.
     """
     client = await get_client()
     t = timeout if timeout is not None else _settings.HTTP_TIMEOUT
-    log.debug("GET %s params=%s", url, params)
-    res = await client.get(url, params=params, timeout=t)
+    log.debug("%s %s params=%s", method, url, params)
+    if method.upper() == "POST":
+        res = await client.post(url, params=params, data=data, headers=headers, timeout=t)
+    else:
+        res = await client.get(url, params=params, headers=headers, timeout=t)
     res.raise_for_status()
     return res.json()
