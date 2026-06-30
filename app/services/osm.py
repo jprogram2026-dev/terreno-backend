@@ -83,10 +83,18 @@ CNAE_TO_OSM_TAGS: dict[str, list[str]] = {
 
 
 # ============================================================================
-# Resolução de coordenadas via Nominatim
+# URLs das APIs OSM
 # ============================================================================
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+
+# Lista ordenada de mirrors do Overpass — tentamos um por vez se o anterior
+# falhar. kumi.systems costuma ser o mais responsivo; lz4 é fallback rápido;
+# overpass-api.de é o oficial (às vezes sobrecarregado).
+OVERPASS_MIRRORS = [
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+]
 
 # User-Agent obrigatório por política do Nominatim
 OSM_HEADERS = {
@@ -94,6 +102,9 @@ OSM_HEADERS = {
 }
 
 
+# ============================================================================
+# Resolução de coordenadas via Nominatim
+# ============================================================================
 @cached("osm:geo")
 async def geocode_municipio(muni_nome: str, uf_sigla: str) -> Optional[dict]:
     """
@@ -117,13 +128,43 @@ async def geocode_municipio(muni_nome: str, uf_sigla: str) -> Optional[dict]:
             "display_name": first.get("display_name"),
         }
     except Exception as e:
-        log.warning("Falha no Nominatim para %s/%s: %s", muni_nome, uf_sigla, e)
+        log.warning("Falha no Nominatim para %s/%s: %s (%s)",
+                    muni_nome, uf_sigla, type(e).__name__, e)
         return None
 
 
 # ============================================================================
 # Consulta Overpass — busca estabelecimentos
 # ============================================================================
+async def _try_overpass(query: str) -> Optional[dict]:
+    """
+    Tenta cada mirror do Overpass em ordem. Retorna o primeiro JSON válido
+    ou None se todos falharem. Loga erro detalhado de cada tentativa para
+    facilitar diagnóstico em produção.
+    """
+    last_error: Optional[str] = None
+    for mirror in OVERPASS_MIRRORS:
+        try:
+            log.info("Overpass: tentando %s", mirror)
+            data = await fetch_json(
+                mirror,
+                method="POST",
+                data={"data": query},
+                headers=OSM_HEADERS,
+                timeout=60,
+            )
+            if data and "elements" in data:
+                log.info("Overpass OK em %s — %d elementos", mirror, len(data["elements"]))
+                return data
+            last_error = f"resposta sem 'elements' em {mirror}"
+        except Exception as ex:
+            last_error = f"{type(ex).__name__} em {mirror}: {ex}"
+            log.warning("Overpass falhou em %s: %s (%s)", mirror, type(ex).__name__, ex)
+            continue
+    log.error("Todos os mirrors Overpass falharam — último erro: %s", last_error)
+    return None
+
+
 @cached("osm:places")
 async def fetch_places(muni_nome: str, uf_sigla: str, cnae_classe: str) -> dict:
     """
@@ -150,29 +191,25 @@ async def fetch_places(muni_nome: str, uf_sigla: str, cnae_classe: str) -> dict:
 
     # Monta query Overpass. Usa node + way (alguns estabelecimentos são polígonos)
     # `out center` retorna o centroide pra ways/relations.
+    # Timeout interno aumentado pra 60s — para cidades grandes com muitos pontos
+    # o Overpass pode demorar mais que o default 25s.
     s, w, n, e = geo["bbox"]
     parts = []
     for tag in tags:
         parts.append(f'node[{tag}]({s},{w},{n},{e});')
         parts.append(f'way[{tag}]({s},{w},{n},{e});')
     query = f"""
-[out:json][timeout:25];
+[out:json][timeout:60];
 ({"".join(parts)});
-out center 500;
-"""
+out center;
+""".strip()
 
-    try:
-        data = await fetch_json(
-            OVERPASS_URL,
-            method="POST",
-            data={"data": query},
-            headers=OSM_HEADERS,
-            timeout=30,
-        )
-    except Exception as ex:
-        log.warning("Falha no Overpass para %s/%s/%s: %s", muni_nome, uf_sigla, cnae_classe, ex)
+    log.debug("Overpass query para %s/%s/%s: %s", muni_nome, uf_sigla, cnae_classe, query)
+
+    data = await _try_overpass(query)
+    if data is None:
         return {"places": [], "center": geo["center"], "bbox": geo["bbox"], "total": 0,
-                "coverage_note": "Falha ao consultar OpenStreetMap"}
+                "coverage_note": "Falha ao consultar OpenStreetMap (todos os mirrors indisponíveis)"}
 
     places = []
     for el in data.get("elements", []):
